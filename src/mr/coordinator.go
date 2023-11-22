@@ -1,23 +1,33 @@
 package mr
 
 import (
-	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/rpc"
 	"os"
+	"strconv"
+	"sync"
+	"time"
 )
 
 type Coordinator struct {
 	// Your definitions here.
 
-	files       []string
-	nReduce     int
-	fileWorker  map[string]int
-	lastGivenID int
+	files         []string
+	intermediates []string
+	nReduce       int
+	fileWorker    map[int]string
+	lastGivenID   int
+	stage         string
+	activeWorkers int
 }
+
+var mutex sync.Mutex
+var group2 sync.WaitGroup
+
+var t = 10
 
 // Your code here -- RPC handlers for the worker to call.
 
@@ -46,46 +56,163 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *StringReply) error {
 
 func (c *Coordinator) HandleWorker(args *Args, reply *Reply) error {
 
-	workerID := c.lastGivenID + 1
-
+	//mutex.Lock()
 	switch cmd := args.Command; cmd {
+
 	case "Give":
-		//path := "./main/"
-		filename := c.files[0]
-		c.files = c.files[1:]
 
-		file, err := os.Open(filename)
-		if err != nil {
-			log.Fatalf("cannot open!! %v", filename)
+		mutex.Lock()
+		stage := c.stage
+		mutex.Unlock()
+
+		if stage == "Map" {
+
+			mutex.Lock()
+			if len(c.files) == 0 {
+				reply.Command = "Sleep"
+				mutex.Unlock()
+				break
+			}
+			workerID := c.lastGivenID
+			c.lastGivenID = workerID + 1
+			filename := c.files[0]
+			c.files = c.files[1:]
+			reply.Command = c.stage
+			//mutex.Unlock()
+
+			/*file, err := os.Open(filename)
+			if err != nil {
+				log.Fatalf("cannot open!! %v", filename)
+			}
+			content, err := io.ReadAll(file)
+			if err != nil {
+				log.Fatalf("cannot read %v", filename)
+			}
+			file.Close()
+
+			*/
+			//mutex.Lock()
+			c.fileWorker[workerID] = filename
+			mutex.Unlock()
+
+			reply.WorkerID = workerID
+			reply.NReduce = c.nReduce
+			reply.Content = filename //string(content)
+
+			//go c.asyncCheck(t, workerID, "Map")
+
+		} else if stage == "Reduce" {
+
+			mutex.Lock()
+
+			if len(c.intermediates) == 0 {
+				reply.Command = "Sleep"
+				mutex.Unlock()
+				break
+			}
+
+			//fmt.Println(c.intermediates)
+			filename := c.intermediates[0]
+			c.intermediates = c.intermediates[1:]
+			workerID := c.lastGivenID
+			c.lastGivenID = workerID + 1
+			reply.Command = c.stage
+
+			mutex.Unlock()
+
+			reply.WorkerID = workerID
+			reply.NReduce = c.nReduce
+
+			reply.Content = filename
+
+			mutex.Lock()
+			c.fileWorker[workerID] = filename
+			mutex.Unlock()
+
+			//fmt.Println("Given out: ", filename)
+			//go c.asyncCheck(t, workerID, "Reduce")
+
 		}
-		content, err := io.ReadAll(file)
-		if err != nil {
-			log.Fatalf("cannot read %v", filename)
+
+	case "Done Mapping":
+		mutex.Lock()
+		//fmt.Println(args.WorkerID, "is done with mapping, file =", args.Content)
+		//filename := "mr-out-*-" + strconv.Itoa(args.WorkerID)
+
+		//c.intermediates = append(c.intermediates, filename)
+
+		if len(c.intermediates) == 0 {
+			for i := 0; i < c.nReduce; i++ {
+				filename := "mr-out-*-" + strconv.Itoa(i)
+				//fmt.Println(filename)
+				c.intermediates = append(c.intermediates, filename)
+			}
+
 		}
-		file.Close()
 
-		reply.WorkerID = workerID
-		reply.NReduce = c.nReduce
-		fmt.Println(c.nReduce)
-		reply.Command = "Map"
-		reply.Content = string(content)
+		delete(c.fileWorker, args.WorkerID)
+		if len(c.files) == 0 && len(c.fileWorker) == 0 {
+			c.lastGivenID = 0
+			c.stage = "Reduce"
+			//reply.Command = "Well done"
+		}
+		mutex.Unlock()
 
-		c.fileWorker[filename] = workerID
-		fmt.Println("Given out: ", filename)
+	case "Done":
+		mutex.Lock()
+		//fmt.Println(strconv.Itoa(args.WorkerID) + " is done with some work with return file: " + args.ContentName)
 
-		/*
-			time.sleep(10 seconds)
-			if the file associated with the worker hasnt reported done then select
-			a new worker for that file
+		if _, ok := c.fileWorker[args.WorkerID]; !ok {
+			reply.Command = "TOO LATE YOU SLOW POS"
+			mutex.Unlock()
+			break
+		}
+		delete(c.fileWorker, args.WorkerID)
+		if len(c.intermediates) == 0 && len(c.fileWorker) == 0 {
+			c.lastGivenID = 0
+			c.stage = "Done"
+		}
+		mutex.Unlock()
+		reply.Command = "Well done"
 
-		*/
+		//fmt.Println(c.fileWorker)
+		//mutex.Unlock()
 
 	default:
 
 	}
 
-	c.lastGivenID = workerID
+	//mutex.Unlock()
 	return nil
+
+}
+
+func (c *Coordinator) asyncCheck(sleepSeconds int, workerID int, stage string) {
+	time.Sleep(time.Duration(sleepSeconds) * time.Second)
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	switch coordStage := c.stage; coordStage {
+
+	case "Map":
+		if stage != "Map" {
+			break
+		}
+		if file, ok := c.fileWorker[workerID]; ok {
+			c.files = append(c.files, file)
+			delete(c.fileWorker, workerID)
+		}
+
+	case "Reduce":
+		if stage != "Reduce" {
+			break
+		}
+		if file, ok := c.fileWorker[workerID]; ok {
+			c.intermediates = append(c.intermediates, file)
+			delete(c.fileWorker, workerID)
+		}
+
+	}
 
 }
 
@@ -113,6 +240,11 @@ func (c *Coordinator) Done() bool {
 	ret := false
 
 	// Your code here.
+	mutex.Lock()
+	if c.stage == "Done" {
+		ret = true
+	}
+	mutex.Unlock()
 
 	return ret
 }
@@ -123,8 +255,13 @@ func (c *Coordinator) Done() bool {
 // nReduce is the number of reduce tasks to use.
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{files, nReduce, make(map[string]int), 0}
+	c := Coordinator{files, []string{}, nReduce, make(map[int]string), 0, "Map", 0}
 
+	/*go func() {
+		time.Sleep(60 * time.Second)
+		c.stage = "Done"
+	}()
+	*/
 	// Your code here.
 
 	c.server()

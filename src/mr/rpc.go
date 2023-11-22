@@ -29,7 +29,10 @@ type StringReply struct {
 }
 
 type Args struct {
-	Command string
+	WorkerID    int
+	Command     string
+	Content     string
+	ContentName string
 }
 
 type Reply struct {

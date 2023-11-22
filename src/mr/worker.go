@@ -1,13 +1,18 @@
 package mr
 
 import (
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"log"
 	"net/rpc"
 	"os"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
+	"time"
 )
 
 //
@@ -38,62 +43,92 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-func reduce(reducef func(string, []string) string, bucket int, workerID int, out *os.File) {
+func reduce(reducef func(string, []string) string, filename string, nReduce int, out *os.File) {
 
 	/*
 
-		1. Read the
+		1. Read the contents of the intermediate file
+		2. Convert each line into a KeyValue struct and put them in memory inside a slice
+		3. Sort this slice by using sort.Sort(ByKey(fileWC))
+		4. Calculate the reduce of each key, which is unique for that file, and store it in some output struct
+		5. Write to the output filezel
 
 
 
 
 	*/
 
-	/*
+	var intermediate []KeyValue
 
-		output := []KeyValue{}
+	for p := 0; p <= nReduce; p++ {
+		//fmt.Printf("Worker: %d, Bucket: %s\n", p, filename)
+		//oname := "mr-out-" + strconv.Itoa(p) + "-" + strconv.Itoa(bucket)
+		//fmt.Println(oname)
 
-		oname := "mr-out-" + strconv.Itoa(workerID) + "-" + strconv.Itoa(bucket)
-
-		temp, err := os.ReadFile(oname)
+		/*temp, err := os.ReadFile(oname)
 		if err != nil {
-			fmt.Println("kasdkasdksakd")
+			//fmt.Println("kasdkasdksakd")
+		}
+		*/
+
+		oname := strings.Replace(filename, "*", strconv.Itoa(p), 1)
+
+		file, err := os.Open(oname)
+		if err != nil {
+			break
+		}
+		dec := json.NewDecoder(file)
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+				break
+			}
+
+			intermediate = append(intermediate, kv)
+
 		}
 
+		/*text := strings.Split(string(temp), "\n")
 
-		text := strings.Split(string(temp), "\n")
-		firstLine := text[0]
-		key := strings.Split(firstLine, " ")[0]
 		for _, line := range text {
+			if line == "" {
+				break
+			}
 			t := strings.Split(line, " ")
-
+			intermediate = append(intermediate, KeyValue{t[0], t[1]})
 
 		}
+		*/
+		file.Close()
+		os.Remove(oname)
+	}
 
-		i := 0
-		for i < len(bucket) {
-			j := i + 1
-			for j < len(bucket) && bucket[j].Key == bucket[i].Key {
-				j++
-			}
-			values := []string{}
-			for k := i; k < j; k++ {
-				values = append(values, bucket[k].Value)
-			}
+	sort.Sort(ByKey(intermediate))
 
-			// this is the correct format for each line of Reduce output.
-			output := reducef(bucket[i].Key, values)
-
-			// this is the correct format for each line of Reduce output.
-			fmt.Fprintf(ofile, "%v %v\n", bucket[i].Key, output)
-
-			i = j
+	i := 0
+	for i < len(intermediate) {
+		j := i + 1
+		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+			j++
 		}
-		//c <- oname
-		ofile.Close()
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, intermediate[k].Value)
 
+		}
+		//fmt.Println(intermediate[i].Key, len(values))
+		// this is the correct format for each line of Reduce output.
+		output := reducef(intermediate[i].Key, values)
 
-	*/
+		// this is the correct format for each line of Reduce output.
+		fmt.Fprintf(out, "%v %v\n", intermediate[i].Key, output)
+
+		i = j
+	}
+
+	out.Close()
+
+	//c <- oname
 }
 
 //
@@ -105,95 +140,125 @@ func Worker(mapf func(string, string) []KeyValue,
 	// Your worker implementation here.
 
 	// uncomment to send the Example RPC to the coordinator.
-	reply := getTaskCall()
-	fileWC := mapf("LOL no", reply.Content)
-	workerID := reply.WorkerID
 
-	//sort.Sort(ByKey(fileWC))
+	for {
 
-	intermediateBuckets := make([][]KeyValue, reply.NReduce)
-	for _, v := range fileWC {
-		bucket := ihash(v.Key) % reply.NReduce
+		args := Args{-1, "Give", "", ""}
+		reply := getTaskCall(&args)
+		workerID := reply.WorkerID
+		nReduce := reply.NReduce
 
-		intermediateBuckets[bucket] = append(intermediateBuckets[bucket], v)
+		switch task := reply.Command; task {
 
-	}
+		case "Map":
 
-	for i := 0; i < reply.NReduce; i++ {
-		oname := "mr-out-" + strconv.Itoa(workerID) + "-" + strconv.Itoa(i)
-		file, err := os.Create(oname)
-		if err != nil {
-			fmt.Println("Error creating file!")
+			//fmt.Println("I am worker", workerID, "with PID:", os.Getpid())
+			//fmt.Println("Working on mapping")
+			//MAPPING
+
+			file, err := os.Open(reply.Content)
+			if err != nil {
+				log.Fatalf("cannot open!! %v", reply.Content)
+			}
+			content, err := io.ReadAll(file)
+			if err != nil {
+				log.Fatalf("cannot read %v", reply.Content)
+			}
+			file.Close()
+
+			fileWC := mapf(file.Name(), string(content))
+
+			//sort.Sort(ByKey(fileWC))
+
+			intermediateBuckets := make([][]KeyValue, reply.NReduce)
+			for _, v := range fileWC {
+				bucket := ihash(v.Key) % nReduce
+
+				intermediateBuckets[bucket] = append(intermediateBuckets[bucket], v)
+
+			}
+
+			for i := 0; i < nReduce; i++ {
+				oname := "mr-out-" + strconv.Itoa(workerID) + "-" + strconv.Itoa(i)
+				file, err := os.Create(oname)
+				if err != nil {
+					//fmt.Println("Error creating file!")
+				}
+				enc := json.NewEncoder(file)
+				for _, v := range intermediateBuckets[i] {
+					err := enc.Encode(&v)
+					//file.WriteString(v.Key + " " + v.Value + "\n")
+					if err != nil {
+						//fmt.Println("ERROR ENCODING")
+					}
+				}
+
+			}
+			args = Args{workerID, "Done Mapping", "mr-out-" + strconv.Itoa(workerID) + "-*", ""}
+			reply = getTaskCall(&args)
+
+		case "Reduce":
+			//fmt.Println("Dispatching reducers")
+			//REDUCING
+			output, err := os.Create("mr-out-" + strconv.Itoa(workerID))
+			if err != nil {
+				//fmt.Println("ERROR CREATING OUTPUT FILE")
+			}
+
+			reduce(reducef, reply.Content, nReduce, output)
+
+			//WAIT FOR REDUCING TO BE DONE
+			output.Close()
+
+			//fmt.Println("Reducing done")
+			args = Args{}
+			reply = Reply{}
+
+			args.WorkerID = workerID
+			args.Command = "Done"
+			args.ContentName = "mr-out-" + strconv.Itoa(workerID)
+			output, err = os.Open("mr-out-" + strconv.Itoa(workerID))
+			if err != nil {
+				//fmt.Println("ERROR")
+			}
+			text, err := io.ReadAll(output)
+			if err != nil {
+				//fmt.Println("ERROR")
+			}
+			args.Content = string(text)
+
+			reply = getTaskCall(&args)
+
+		case "Sleep":
+			//fmt.Println("I am sleeping for 10 seconds!")
+			time.Sleep(1 * time.Second)
+
+		case "Well done", "Please die":
+			//fmt.Println("EXITING")
+			return
+		default:
+			//fmt.Println("No response from RPC server, I am now dead!")
+			return
+
 		}
-		for _, v := range intermediateBuckets[i] {
-			file.WriteString(v.Key + " " + v.Value + "\r\n")
-		}
+
+		////fmt.Println("Answer from coordinator: ", reply.Command)
 
 	}
 
-	out, err := os.Create("mr-out-" + strconv.Itoa(workerID))
-	if err != nil {
-		fmt.Println("asdasd")
-	}
-
-	for i := 0; i < reply.NReduce; i++ {
-		go reduce(reducef, i, workerID, out)
-	}
-
-	//c := make(chan string)
-	/*for ind, val := range intermediateBuckets {
-		group.Add(1)
-		bucket := val
-		go func(ind int) {
-
-			defer group.Done()
-			reduce(reducef, bucket, workerID, ind)
-
-		}(ind)
-	}*/
-
-	group.Wait()
-
-	fmt.Println("Done")
-	/*for {
-		fmt.Println(<-c)
-	}
-	*/
 }
 
-func getTaskCall() Reply {
-
-	args := Args{}
-	args.Command = "Give"
+func getTaskCall(args *Args) Reply {
 
 	reply := Reply{}
 
 	ok := call("Coordinator.HandleWorker", &args, &reply)
 	if !ok {
-		fmt.Println("Call failed!")
+		//fmt.Println("Call failed!")
+		return reply
 	}
-
-	fmt.Println("Got something to do!")
 
 	return reply
-
-	/*switch cmd := reply.Command; cmd {
-
-	case "Map":
-
-		ID := reply.WorkerID
-		nReduce := reply.nReduce
-
-		content := reply.Content
-
-		m := mapf
-
-		//do the motherfucking mapping
-
-
-	default:
-	}
-	*/
 
 }
 
