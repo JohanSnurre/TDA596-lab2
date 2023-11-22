@@ -35,7 +35,7 @@ type Coordinator struct {
 // master tasks:
 // assign tasks
 func (c *Coordinator) AssignTasks(args *Args, reply *Reply) error {
-	if c.currentMapI > len(c.files) {
+	if c.currentMapI < len(c.files) {
 		// map
 		currentFile := c.forMap[c.currentMapI]
 		c.currentMapI = c.currentMapI + 1
@@ -60,6 +60,11 @@ func (c *Coordinator) AssignTasks(args *Args, reply *Reply) error {
 }
 
 // collect mapped files
+func (c *Coordinator) ManageMapTaskFinished(args *Args, reply *Reply) error {
+	fmt.Println("###################")
+	// fmt.Println(args.Intermediate)
+	return nil
+}
 
 // collect reduced files
 

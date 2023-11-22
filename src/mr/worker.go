@@ -12,20 +12,13 @@ import (
 	"strconv"
 )
 
-var NReduce int = 10
-
 // for sorting by key.
 type ByKey []KeyValue
 
-// for sorting by key.
+// for sorting by key. (from mrsequential)
 func (a ByKey) Len() int           { return len(a) }
 func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
-
-// read contents, parses and use uders defined function
-// produces key, values, buffer it in memory
-// buffered writen to disk
-// read data, sort
 
 // Map functions return a slice of KeyValue.
 type KeyValue struct {
@@ -45,34 +38,17 @@ func ihash(key string) int {
 // mapf, reducef - funciton in wc.go for mapreduce
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
-
-	// reply - contin wheher map/reduce, filename
 	reply := CallAssignTask()
-
-	fmt.Println("---------")
-	fmt.Println(reply)
-	fmt.Println("---------")
 
 	if reply.IsMap {
 		doMap(reply, mapf)
 	} else {
-		doReduce(reply, reducef)
+		//doReduce(reply, reducef)
 	}
-
-	// either map or reduce
-
-	// reduce
-	// sort -> group -> write to file
-	// in (out_key, list_intermmediate_alues)
-	// out -> output vlaue
-
-	// uncomment to send the Example RPC to the coordinator.
-	// CallExample()
-
 }
 
 func doMap(reply Reply, mapf func(string, string) []KeyValue) {
-	intermediate := make([][]KeyValue, NReduce)
+	intermediate := make([][]KeyValue, reply.NReduce)
 
 	// copied from mssequential for mapping
 	filename := reply.File
@@ -90,21 +66,19 @@ func doMap(reply Reply, mapf func(string, string) []KeyValue) {
 	kva := mapf(filename, string(content))
 
 	// create nReduce intermediate files for consumption by the reduce tasks - nReduceXmap buckets?
-	// hash the word -> put into bucket
-	// intermediate = append(intermediate, kva...)
 	for _, k := range kva {
-		hashed := ihash(k.Key) % 10 // TODO: nReduce
+		hashed := ihash(k.Key) % reply.NReduce
 		intermediate[hashed] = append(intermediate[hashed], k)
 	}
 
-	for i := 0; i < 10; i++ {
+	for i := 0; i < reply.NReduce; i++ {
 		bucket := intermediate[i]
 		outName := "mr-X" + "-" + strconv.Itoa(i)
 		file, _ := os.Create(outName)
 
 		sort.Sort(ByKey(bucket))
 
-		// encoding for smaller files
+		// encoding for sjson
 		enc := json.NewEncoder(file)
 		for _, kv := range bucket {
 			enc.Encode(&kv)
@@ -113,17 +87,11 @@ func doMap(reply Reply, mapf func(string, string) []KeyValue) {
 		reply.Intermediate = append(reply.Intermediate, outName)
 	}
 
-	//fmt.Println(intermediate)
-
-	fmt.Println("map" + reply.File)
+	// msg coordinator that map done
+	CallMapTaskFinished()
 }
 
 func doReduce(reply Reply, reducef func(string, []string) string) {
-	// reduce
-	// sort -> group -> write to file
-	// in (out_key, list_intermmediate_alues)
-	// out -> output vlaue
-
 	intermediate := reply.Intermediate
 	var kva []KeyValue
 	oname := "mr-out-" + strconv.Itoa(0)
@@ -143,11 +111,9 @@ func doReduce(reply Reply, reducef func(string, []string) string) {
 		kva = append(kva, kv)
 	}
 
+	// copied from mrsquential
 	i := 0
 	for i < len(kva) {
-		// load entried from the intermediate file
-
-		// content loaded in kva now
 
 		j := i + 1
 		for j < len(kva) && kva[j].Key == kva[i].Key {
@@ -163,41 +129,7 @@ func doReduce(reply Reply, reducef func(string, []string) string) {
 		fmt.Fprintf(ofile, "%v %v\n", kva[i].Key, output)
 
 		i = j
-
-		// do the reduce from mrseqential
-
-		// save to the file output of mr-put-X?
 	}
-
-	// oname := "mr-out-0"
-	// ofile, _ := os.Create(oname)
-
-	//
-	// call Reduce on each distinct key in intermediate[],
-	// and print the result to mr-out-0.
-	//
-	// intermediate := reply.Intermediate
-	// i := 0
-	// for i < len(intermediate) {
-	// 	j := i + 1
-	// 	for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
-	// 		j++
-	// 	}
-	// 	values := []string{}
-	// 	for k := i; k < j; k++ {
-	// 		values = append(values, intermediate[k].Value)
-	// 	}
-	// 	output := reducef(intermediate[i].Key, values)
-
-	// 	// this is the correct format for each line of Reduce output.
-	// 	fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
-
-	// 	i = j
-	// }
-
-	// ofile.Close()
-
-	// fmt.Println("reduuce" + reply.File)
 
 }
 
@@ -213,12 +145,18 @@ func CallAssignTask() Reply {
 	}
 
 	return reply
-	// if ok {
-	// 	// reply.Y should be 100.
-	// 	fmt.Printf("reply.Y %v\n", reply.Y)
-	// } else {
-	// 	fmt.Printf("call failed!\n")
-	// }
+}
+
+func CallMapTaskFinished() {
+	args := Args{}
+	reply := Reply{}
+
+	// will gets args and reply from coordinator?
+	ok := call("Coordinator.ManageMapTaskFinished", &args, &reply)
+	if ok {
+		fmt.Println("called")
+
+	}
 }
 
 // example function to show how to make an RPC call to the coordinator.
