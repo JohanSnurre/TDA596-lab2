@@ -34,6 +34,7 @@ type Reply struct {
 	Intermediate []string
 	MapIndex     int
 	NReduce      int
+	ReduceIndex  int
 }
 
 type MapArgs struct {

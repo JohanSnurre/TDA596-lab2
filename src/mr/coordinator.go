@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/rpc"
 	"os"
-	"strconv"
 )
 
 // receive files and nreduce
@@ -23,11 +22,11 @@ type TaskInfo struct {
 }
 
 type Coordinator struct {
-	files       []string
-	nReduce     int
-	forMap      []TaskInfo  // index and done status
-	forReduce   map[int]int // index for reduce and also mapped index?
-	currentMapI int
+	files          []string
+	nReduce        int
+	forMap         []TaskInfo // index and done status
+	currentMapI    int
+	currentReduceI int
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -45,16 +44,17 @@ func (c *Coordinator) AssignTasks(args *Args, reply *Reply) error {
 		c.currentMapI = c.currentMapI + 1
 
 		fmt.Println("map")
-		fmt.Println(reply.File)
-		fmt.Println("###")
-	} else {
+	} else if c.currentReduceI < c.nReduce {
 		// reduce
-		for i := 0; i < 1; i++ {
-			reply.Intermediate = append(reply.Intermediate, "mr-X-"+strconv.Itoa(i))
-		}
 		reply.IsMap = false
 		reply.NReduce = c.nReduce
+		reply.ReduceIndex = c.currentReduceI
+		c.currentReduceI = c.currentReduceI + 1
+		reply.MapIndex = c.currentMapI
+
 		fmt.Println("reduce")
+	} else {
+		c.Done()
 	}
 
 	return nil
@@ -63,7 +63,6 @@ func (c *Coordinator) AssignTasks(args *Args, reply *Reply) error {
 // collect mapped files
 func (c *Coordinator) ManageMapTaskFinished(args *MapArgs, reply *Reply) error {
 	fmt.Println("###################")
-	fmt.Println(args.Intermediate)
 	return nil
 }
 
@@ -98,12 +97,12 @@ func (c *Coordinator) server() {
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
-	ret := len(c.forMap) == 0 && len(c.forReduce) == 0
+	// ret := len(c.forMap) == 0 && len(c.forReduce) == 0
 
 	// Your code here.
 	// traverse thorugh workers and see if they are finished
 
-	return ret
+	return true
 }
 
 // create a Coordinator.
@@ -114,8 +113,8 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 
 	c.nReduce = nReduce
 	c.files = files
-	c.forReduce = make(map[int]int, len(files))
 	c.currentMapI = 0
+	c.currentReduceI = 0
 
 	// assign tasks - file and done value
 	for i := 0; i < len(files); i++ {

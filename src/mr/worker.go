@@ -76,8 +76,6 @@ func doMap(reply Reply, mapf func(string, string) []KeyValue) {
 		outName := "mr-" + strconv.Itoa(reply.MapIndex) + "-" + strconv.Itoa(i)
 		file, _ := os.Create(outName)
 
-		sort.Sort(ByKey(bucket))
-
 		// encoding for sjson
 		enc := json.NewEncoder(file)
 		for _, kv := range bucket {
@@ -92,24 +90,29 @@ func doMap(reply Reply, mapf func(string, string) []KeyValue) {
 }
 
 func doReduce(reply Reply, reducef func(string, []string) string) {
-	intermediate := reply.Intermediate
+	// intermediate := reply.Intermediate
 	var kva []KeyValue
-	oname := "mr-out-" + strconv.Itoa(0)
+	oname := "mr-out-" + strconv.Itoa(reply.ReduceIndex)
 	ofile, _ := os.Create(oname)
 
-	file, err := os.Open(intermediate[0])
-	if err != nil {
-		log.Fatalf("cannot open %v", intermediate[0])
+	for i := 0; i < reply.MapIndex; i++ {
+		filename := "mr-" + strconv.Itoa(i) + "-" + strconv.Itoa(reply.ReduceIndex)
+		file, err := os.Open(filename)
+		if err != nil {
+			log.Fatalf("cannot open %v", filename)
+		}
+
+		dec := json.NewDecoder(file)
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+				break
+			}
+			kva = append(kva, kv)
+		}
 	}
 
-	dec := json.NewDecoder(file)
-	for {
-		var kv KeyValue
-		if err := dec.Decode(&kv); err != nil {
-			break
-		}
-		kva = append(kva, kv)
-	}
+	sort.Sort(ByKey(kva))
 
 	// copied from mrsquential
 	i := 0
@@ -140,7 +143,7 @@ func CallAssignTask() Reply {
 	// will gets args and reply from coordinator?
 	ok := call("Coordinator.AssignTasks", &args, &reply)
 	if ok {
-		fmt.Println("called")
+		fmt.Println("..")
 
 	}
 
@@ -157,7 +160,7 @@ func CallMapTaskFinished(r Reply) {
 	// will gets args and reply from coordinator?
 	ok := call("Coordinator.ManageMapTaskFinished", &args, &reply)
 	if ok {
-		fmt.Println("called")
+		fmt.Println("############")
 
 	}
 }
