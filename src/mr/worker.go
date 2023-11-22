@@ -22,13 +22,13 @@ type KeyValue struct {
 type Bykey []KeyValue
 
 // Less implements sort.Interface.
-func (Bykey) Less(i int, j int) bool {
-	panic("unimplemented")
+func (a Bykey) Less(i int, j int) bool {
+	return a[i].Key < a[j].Key
 }
 
 // Swap implements sort.Interface.
-func (Bykey) Swap(i int, j int) {
-	panic("unimplemented")
+func (a Bykey) Swap(i int, j int) {
+	a[i], a[j] = a[j], a[i]
 }
 
 func (a Bykey) Len() int { return len(a) }
