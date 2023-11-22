@@ -43,7 +43,7 @@ func Worker(mapf func(string, string) []KeyValue,
 	if reply.IsMap {
 		doMap(reply, mapf)
 	} else {
-		//doReduce(reply, reducef)
+		doReduce(reply, reducef)
 	}
 }
 
