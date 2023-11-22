@@ -38,10 +38,11 @@ func (c *Coordinator) AssignTasks(args *Args, reply *Reply) error {
 	if c.currentMapI < len(c.files) {
 		// map
 		currentFile := c.forMap[c.currentMapI]
-		c.currentMapI = c.currentMapI + 1
 		reply.File = c.files[currentFile.fileIndex]
 		reply.IsMap = true
 		reply.NReduce = c.nReduce
+		reply.MapIndex = c.currentMapI
+		c.currentMapI = c.currentMapI + 1
 
 		fmt.Println("map")
 		fmt.Println(reply.File)
@@ -60,9 +61,9 @@ func (c *Coordinator) AssignTasks(args *Args, reply *Reply) error {
 }
 
 // collect mapped files
-func (c *Coordinator) ManageMapTaskFinished(args *Args, reply *Reply) error {
+func (c *Coordinator) ManageMapTaskFinished(args *MapArgs, reply *Reply) error {
 	fmt.Println("###################")
-	// fmt.Println(args.Intermediate)
+	fmt.Println(args.Intermediate)
 	return nil
 }
 

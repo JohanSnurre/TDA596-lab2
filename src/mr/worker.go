@@ -73,7 +73,7 @@ func doMap(reply Reply, mapf func(string, string) []KeyValue) {
 
 	for i := 0; i < reply.NReduce; i++ {
 		bucket := intermediate[i]
-		outName := "mr-X" + "-" + strconv.Itoa(i)
+		outName := "mr-" + strconv.Itoa(reply.MapIndex) + "-" + strconv.Itoa(i)
 		file, _ := os.Create(outName)
 
 		sort.Sort(ByKey(bucket))
@@ -88,7 +88,7 @@ func doMap(reply Reply, mapf func(string, string) []KeyValue) {
 	}
 
 	// msg coordinator that map done
-	CallMapTaskFinished()
+	CallMapTaskFinished(reply)
 }
 
 func doReduce(reply Reply, reducef func(string, []string) string) {
@@ -147,9 +147,12 @@ func CallAssignTask() Reply {
 	return reply
 }
 
-func CallMapTaskFinished() {
-	args := Args{}
+func CallMapTaskFinished(r Reply) {
+	args := MapArgs{}
 	reply := Reply{}
+
+	args.Intermediate = r.Intermediate
+	args.MapIndex = r.MapIndex
 
 	// will gets args and reply from coordinator?
 	ok := call("Coordinator.ManageMapTaskFinished", &args, &reply)
