@@ -56,7 +56,6 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *StringReply) error {
 
 func (c *Coordinator) HandleWorker(args *Args, reply *Reply) error {
 
-	//mutex.Lock()
 	switch cmd := args.Command; cmd {
 
 	case "Give":
@@ -78,26 +77,13 @@ func (c *Coordinator) HandleWorker(args *Args, reply *Reply) error {
 			filename := c.files[0]
 			c.files = c.files[1:]
 			reply.Command = c.stage
-			//mutex.Unlock()
 
-			/*file, err := os.Open(filename)
-			if err != nil {
-				log.Fatalf("cannot open!! %v", filename)
-			}
-			content, err := io.ReadAll(file)
-			if err != nil {
-				log.Fatalf("cannot read %v", filename)
-			}
-			file.Close()
-
-			*/
-			//mutex.Lock()
 			c.fileWorker[workerID] = filename
 			mutex.Unlock()
 
 			reply.WorkerID = workerID
 			reply.NReduce = c.nReduce
-			reply.Content = filename //string(content)
+			reply.Content = filename
 
 			//go c.asyncCheck(t, workerID, "Map")
 
@@ -111,7 +97,6 @@ func (c *Coordinator) HandleWorker(args *Args, reply *Reply) error {
 				break
 			}
 
-			//fmt.Println(c.intermediates)
 			filename := c.intermediates[0]
 			c.intermediates = c.intermediates[1:]
 			workerID := c.lastGivenID
@@ -129,17 +114,12 @@ func (c *Coordinator) HandleWorker(args *Args, reply *Reply) error {
 			c.fileWorker[workerID] = filename
 			mutex.Unlock()
 
-			//fmt.Println("Given out: ", filename)
 			//go c.asyncCheck(t, workerID, "Reduce")
 
 		}
 
 	case "Done Mapping":
 		mutex.Lock()
-		//fmt.Println(args.WorkerID, "is done with mapping, file =", args.Content)
-		//filename := "mr-out-*-" + strconv.Itoa(args.WorkerID)
-
-		//c.intermediates = append(c.intermediates, filename)
 
 		if len(c.intermediates) == 0 {
 			for i := 0; i < c.nReduce; i++ {
@@ -160,7 +140,6 @@ func (c *Coordinator) HandleWorker(args *Args, reply *Reply) error {
 
 	case "Done":
 		mutex.Lock()
-		//fmt.Println(strconv.Itoa(args.WorkerID) + " is done with some work with return file: " + args.ContentName)
 
 		if _, ok := c.fileWorker[args.WorkerID]; !ok {
 			reply.Command = "TOO LATE YOU SLOW POS"
@@ -175,14 +154,10 @@ func (c *Coordinator) HandleWorker(args *Args, reply *Reply) error {
 		mutex.Unlock()
 		reply.Command = "Well done"
 
-		//fmt.Println(c.fileWorker)
-		//mutex.Unlock()
-
 	default:
 
 	}
 
-	//mutex.Unlock()
 	return nil
 
 }
@@ -256,13 +231,6 @@ func (c *Coordinator) Done() bool {
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{files, []string{}, nReduce, make(map[int]string), 0, "Map", 0}
-
-	/*go func() {
-		time.Sleep(60 * time.Second)
-		c.stage = "Done"
-	}()
-	*/
-	// Your code here.
 
 	c.server()
 	return &c
