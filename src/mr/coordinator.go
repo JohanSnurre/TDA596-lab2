@@ -21,7 +21,7 @@ type Coordinator struct {
 	fileWorker    map[int]string
 	lastGivenID   int
 	stage         string
-	activeWorkers int
+	GFSName       string
 }
 
 var mutex sync.Mutex
@@ -84,6 +84,7 @@ func (c *Coordinator) HandleWorker(args *Args, reply *Reply) error {
 			reply.WorkerID = workerID
 			reply.NReduce = c.nReduce
 			reply.Content = filename
+			reply.GFSname = c.GFSName
 
 			//go c.asyncCheck(t, workerID, "Map")
 
@@ -109,6 +110,7 @@ func (c *Coordinator) HandleWorker(args *Args, reply *Reply) error {
 			reply.NReduce = c.nReduce
 
 			reply.Content = filename
+			reply.GFSname = c.GFSName
 
 			mutex.Lock()
 			c.fileWorker[workerID] = filename
@@ -197,10 +199,10 @@ func (c *Coordinator) asyncCheck(sleepSeconds int, workerID int, stage string) {
 func (c *Coordinator) server() {
 	rpc.Register(c)
 	rpc.HandleHTTP()
-	//l, e := net.Listen("tcp", ":1234")
-	sockname := coordinatorSock()
-	os.Remove(sockname)
-	l, e := net.Listen("unix", sockname)
+	l, e := net.Listen("tcp", ":1234")
+	//sockname := coordinatorSock()
+	//os.Remove(sockname)
+	//l, e := net.Listen("unix", sockname)
 	if e != nil {
 		log.Fatal("listen error:", e)
 	}
@@ -230,7 +232,7 @@ func (c *Coordinator) Done() bool {
 // nReduce is the number of reduce tasks to use.
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{files, []string{}, nReduce, make(map[int]string), 0, "Map", 0}
+	c := Coordinator{files, []string{}, nReduce, make(map[int]string), 0, "Map", "tda596-group35-lab2-bucket"}
 
 	c.server()
 	return &c

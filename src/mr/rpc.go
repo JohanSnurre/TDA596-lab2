@@ -40,6 +40,7 @@ type Reply struct {
 	NReduce  int
 	Command  string
 	Content  string
+	GFSname  string
 }
 
 // Add your RPC definitions here.

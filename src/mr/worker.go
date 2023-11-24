@@ -13,6 +13,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 )
 
 //
@@ -24,6 +29,10 @@ type KeyValue struct {
 }
 
 var group sync.WaitGroup
+
+var downloader *s3manager.Downloader
+var uploader *s3manager.Uploader
+var GFSName string
 
 // for sorting by key.
 type ByKey []KeyValue
@@ -57,6 +66,13 @@ func reduce(reducef func(string, []string) string, filename string, nReduce int,
 
 
 	*/
+	sess, err := session.NewSession(&aws.Config{
+		Region: aws.String("us-east-1"),
+	})
+	if err != nil {
+		panic("ERROR REDUCE asd")
+	}
+	svc := s3.New(sess)
 
 	var intermediate []KeyValue
 
@@ -72,6 +88,21 @@ func reduce(reducef func(string, []string) string, filename string, nReduce int,
 		*/
 
 		oname := strings.Replace(filename, "*", strconv.Itoa(p), 1)
+
+		f, err := os.Create(oname)
+		if err != nil {
+			panic("Error creating reduce ouput file")
+		}
+
+		_, err = downloader.Download(f, &s3.GetObjectInput{
+			Bucket: aws.String(GFSName),
+			Key:    aws.String(oname),
+		})
+		if err != nil {
+			os.Remove(oname)
+			break
+			//panic("Error downloading file from cloud in reduce")
+		}
 
 		file, err := os.Open(oname)
 		if err != nil {
@@ -100,6 +131,18 @@ func reduce(reducef func(string, []string) string, filename string, nReduce int,
 		}
 		*/
 		file.Close()
+
+		fmt.Println(oname)
+
+		input := &s3.DeleteObjectInput{
+			Bucket: aws.String(GFSName),
+			Key:    aws.String(oname),
+		}
+		_, err = svc.DeleteObject(input)
+		if err != nil {
+			panic("Error removing intermediate from cloud")
+		}
+
 		os.Remove(oname)
 	}
 
@@ -125,9 +168,22 @@ func reduce(reducef func(string, []string) string, filename string, nReduce int,
 
 		i = j
 	}
-
 	out.Close()
 
+	temp, err := os.Open(out.Name())
+	if err != nil {
+		fmt.Println("Error uploading final file")
+	}
+	_, err = uploader.Upload(&s3manager.UploadInput{
+		Bucket: aws.String(GFSName),
+		Key:    aws.String(out.Name()),
+		Body:   temp,
+	})
+	if err != nil {
+		fmt.Println("Error uploading final file")
+	}
+	temp.Close()
+	os.Remove(out.Name())
 	//c <- oname
 }
 
@@ -147,10 +203,38 @@ func Worker(mapf func(string, string) []KeyValue,
 		reply := getTaskCall(&args)
 		workerID := reply.WorkerID
 		nReduce := reply.NReduce
+		GFSName = reply.GFSname
+
+		sess, err := session.NewSession(&aws.Config{
+			Region: aws.String("us-east-1")},
+		)
+		if err != nil {
+			panic(err)
+		}
+
+		//svc := s3.New(sess)
+		downloader = s3manager.NewDownloader(sess)
+		uploader = s3manager.NewUploader(sess)
 
 		switch task := reply.Command; task {
 
 		case "Map":
+
+			f, err := os.Create(reply.Content)
+			if err != nil {
+				fmt.Println("Error creating file locally")
+				return
+			}
+			fmt.Println(GFSName)
+
+			_, err = downloader.Download(f, &s3.GetObjectInput{
+				Bucket: aws.String(GFSName),
+				Key:    aws.String(reply.Content),
+			})
+			if err != nil {
+				fmt.Println("Error retreiving file from cloud")
+				return
+			}
 
 			//fmt.Println("I am worker", workerID, "with PID:", os.Getpid())
 			//fmt.Println("Working on mapping")
@@ -192,7 +276,18 @@ func Worker(mapf func(string, string) []KeyValue,
 						//fmt.Println("ERROR ENCODING")
 					}
 				}
-
+				f, err := os.Open(oname)
+				if err != nil {
+					panic("Error opening file")
+				}
+				_, err = uploader.Upload(&s3manager.UploadInput{
+					Bucket: aws.String(GFSName),
+					Key:    aws.String(oname),
+					Body:   f,
+				})
+				if err != nil {
+					panic("Error uploading intermediate to cloud")
+				}
 			}
 			args = Args{workerID, "Done Mapping", "mr-out-" + strconv.Itoa(workerID) + "-*", ""}
 			reply = getTaskCall(&args)
@@ -300,9 +395,9 @@ func CallExample() string {
 // returns false if something goes wrong.
 //
 func call(rpcname string, args interface{}, reply interface{}) bool {
-	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
-	sockname := coordinatorSock()
-	c, err := rpc.DialHTTP("unix", sockname)
+	c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
+	//sockname := coordinatorSock()
+	//c, err := rpc.DialHTTP("unix", sockname)
 	if err != nil {
 		log.Fatal("dialing:", err)
 	}
