@@ -24,23 +24,28 @@ type ExampleReply struct {
 	Y int
 }
 
+type StringReply struct {
+	S string
+}
+
+type Args struct {
+	WorkerID  int //map task only
+	WorkerIDR int //reduce task only
+	//Command     string
+	Content     string
+	ContentName string
+}
+
+type Reply struct {
+	WorkerID  int //map task only
+	WorkerIDR int //reduce task only
+	NReduce   int
+	Mmap      int
+	Command   string //task type
+	Content   string
+}
+
 // Add your RPC definitions here.
-
-type TaskArgs struct {
-	maptasknum    int // map task number only
-	reducetasknum int // reduce task number only
-}
-
-type TaskReply struct {
-	TaskType string // map or reduce or waiting
-	FileName string
-	NReduce  int // number of reduce tasks
-	nMap     int // number of map tasks
-
-	maptasknum    int // map task number only
-	reducetasknum int // reduce task number only
-
-}
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.
