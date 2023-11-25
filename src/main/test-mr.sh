@@ -29,7 +29,7 @@ maybe_quiet() {
 }
 
 
-#TIMEOUT=timeout
+TIMEOUT=timeout
 TIMEOUT2=""
 if timeout 2s sleep 1 > /dev/null 2>&1
 then
@@ -113,7 +113,6 @@ fi
 # wait for remaining workers and coordinator to exit.
 wait
 
-#exit 1
 
 #########################################################
 # now indexer

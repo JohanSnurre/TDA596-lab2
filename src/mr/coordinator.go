@@ -203,7 +203,7 @@ func (c *Coordinator) cmdDone(args *Args, reply *Reply) {
 }
 
 func (c *Coordinator) mapAsyncCheck(worker int) {
-	time.Sleep(time.Duration(30) * time.Second)
+	time.Sleep(time.Duration(10) * time.Second)
 	mutex.Lock()
 	defer mutex.Unlock()
 
