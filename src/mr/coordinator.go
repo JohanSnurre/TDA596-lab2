@@ -135,24 +135,24 @@ func (c *Coordinator) HandleWorker(args *Args, reply *Reply) error {
 
 		//map finished, give reduce task
 	} else if c.mapfinished == c.nMap && c.reducefinished < c.nReduce {
-		allocate := -1
+		id := -1
 		for i := 0; i < c.nReduce; i++ {
 			if c.reducetaskstatus[i] == "not allocated" {
-				allocate = i
+				id = i
 				break
 			}
 		}
-		if allocate == -1 {
+		if id == -1 {
 			reply.Command = "waiting"
 			mutex.Unlock()
 		} else {
 			reply.Command = "Reduce"
 			reply.NReduce = c.nReduce
-			reply.WorkerID = allocate
-			reply.Content = strconv.Itoa(allocate)
-			c.reducetaskstatus[allocate] = "waiting"
+			reply.WorkerID = id
+			reply.Content = strconv.Itoa(id)
+			c.reducetaskstatus[id] = "waiting"
 			mutex.Unlock()
-			go c.asyncCheck(t, allocate, "Reduce")
+			go c.asyncCheck(t, id, "Reduce")
 		}
 	} else {
 		reply.Command = "Well Done"

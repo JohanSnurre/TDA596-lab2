@@ -192,8 +192,8 @@ func Worker(mapf func(string, string) []KeyValue,
 			finishedargs := Args{workerID, -1, "mr-out-" + strconv.Itoa(workerID) + "-*", ""}
 			finishedReply := ExampleReply{}
 			call("Coordinator.FinishedMap", &finishedargs, &finishedReply)
-			//args = Args{workerID, -1, "mr-out-" + strconv.Itoa(workerID) + "-*", ""}
-			//reply = getTaskCall(&args)
+			args = Args{workerID, -1, "mr-out-" + strconv.Itoa(workerID) + "-*", ""}
+			reply = getTaskCall(&args)
 
 		case "Reduce":
 			//fmt.Println("Dispatching reducers")
@@ -225,12 +225,12 @@ func Worker(mapf func(string, string) []KeyValue,
 			}
 			args.Content = string(text)
 
-			//reply = getTaskCall(&args)
-
 			//call coordinator to tell it that I am done reducing
-			finishedargs := Args{-1, reply.WorkerIDR, "mr-out-" + strconv.Itoa(workerID), ""}
+			finishedargs := Args{-1, reply.WorkerIDR, args.Content, args.ContentName}
 			finishedReply := ExampleReply{}
 			call("Coordinator.FinishedReduce", &finishedargs, &finishedReply)
+
+			reply = getTaskCall(&args)
 
 		case "Sleep":
 			//fmt.Println("I am sleeping for 10 seconds!")
