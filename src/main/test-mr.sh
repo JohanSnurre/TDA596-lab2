@@ -286,6 +286,7 @@ echo '***' Starting crash test.
 # generate the correct output
 ../mrsequential ../../mrapps/nocrash.so ../pg*txt || exit 1
 sort mr-out-0 > mr-correct-crash.txt
+cp mr-correct-crash.txt pp.txt
 rm -f mr-out*
 
 rm -f mr-done
@@ -320,6 +321,7 @@ wait
 
 rm $SOCKNAME
 sort mr-out* | grep . > mr-crash-all
+cp mr-crash-all qq.txt
 if cmp mr-crash-all mr-correct-crash.txt
 then
   echo '---' crash test: PASS

@@ -43,7 +43,7 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-func reduce(reducef func(string, []string) string, filename string, nReduce int, out *os.File) {
+func reduce(reducef func(string, []string) string, filename string, workerID int, nReduce int, out *os.File) {
 
 	/*
 
@@ -59,8 +59,11 @@ func reduce(reducef func(string, []string) string, filename string, nReduce int,
 	*/
 
 	var intermediate []KeyValue
+	//fmt.Println("WORKERID IN REDUCE CALL: " + strconv.Itoa(workerID))
+	//fmt.Println(out.Name())
+	//fmt.Println(filename)
+	for p := 0; ; p++ {
 
-	for p := 0; p <= nReduce; p++ {
 		//fmt.Printf("Worker: %d, Bucket: %s\n", p, filename)
 		//oname := "mr-out-" + strconv.Itoa(p) + "-" + strconv.Itoa(bucket)
 		//fmt.Println(oname)
@@ -70,11 +73,15 @@ func reduce(reducef func(string, []string) string, filename string, nReduce int,
 			//fmt.Println("kasdkasdksakd")
 		}
 		*/
-
-		oname := strings.Replace(filename, "*", strconv.Itoa(p), 1)
+		//fmt.Println("FILENAME: " + filename)
+		rep := strconv.Itoa(p)
+		oname := strings.Replace(filename, "*", rep, 1)
+		//oname = oname + "-" + strconv.Itoa(p)
+		//fmt.Println("REDUCING FILE " + oname)
 
 		file, err := os.Open(oname)
 		if err != nil {
+			//fmt.Println("FAILED TO OPEN FILE")
 			break
 		}
 		dec := json.NewDecoder(file)
@@ -100,7 +107,6 @@ func reduce(reducef func(string, []string) string, filename string, nReduce int,
 		}
 		*/
 		file.Close()
-		os.Remove(oname)
 	}
 
 	sort.Sort(ByKey(intermediate))
@@ -119,14 +125,22 @@ func reduce(reducef func(string, []string) string, filename string, nReduce int,
 		//fmt.Println(intermediate[i].Key, len(values))
 		// this is the correct format for each line of Reduce output.
 		output := reducef(intermediate[i].Key, values)
+		//fmt.Println(intermediate[i].Key, output)
 
 		// this is the correct format for each line of Reduce output.
+
 		fmt.Fprintf(out, "%v %v\n", intermediate[i].Key, output)
 
 		i = j
 	}
 
 	out.Close()
+	for p := 0; p < nReduce; p++ {
+		rep := strconv.Itoa(p)
+		oname := strings.Replace(filename, "*", rep, 1)
+
+		os.Remove(oname)
+	}
 
 	//c <- oname
 }
@@ -146,7 +160,10 @@ func Worker(mapf func(string, string) []KeyValue,
 		args := Args{-1, "Give", "", ""}
 		reply := getTaskCall(&args)
 		workerID := reply.WorkerID
+
 		nReduce := reply.NReduce
+
+		//time.Sleep(2 * time.Second)
 
 		switch task := reply.Command; task {
 
@@ -194,6 +211,7 @@ func Worker(mapf func(string, string) []KeyValue,
 				}
 
 			}
+			//fmt.Println("Done mapping WORKERID: " + strconv.Itoa(workerID) + ", FIlE: " + file.Name())
 			args = Args{workerID, "Done Mapping", "mr-out-" + strconv.Itoa(workerID) + "-*", ""}
 			reply = getTaskCall(&args)
 
@@ -202,10 +220,11 @@ func Worker(mapf func(string, string) []KeyValue,
 			//REDUCING
 			output, err := os.Create("mr-out-" + strconv.Itoa(workerID))
 			if err != nil {
-				//fmt.Println("ERROR CREATING OUTPUT FILE")
+				fmt.Println("ERROR CREATING OUTPUT FILE")
 			}
-
-			reduce(reducef, reply.Content, nReduce, output)
+			//fmt.Println("REDUCING FILE " + reply.Content)
+			//fmt.Println("WORKERID BEFORE REDUCE CALL: " + strconv.Itoa(workerID))
+			reduce(reducef, reply.Content, workerID, nReduce, output)
 
 			//WAIT FOR REDUCING TO BE DONE
 			output.Close()
@@ -217,7 +236,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			args.WorkerID = workerID
 			args.Command = "Done"
 			args.ContentName = "mr-out-" + strconv.Itoa(workerID)
-			output, err = os.Open("mr-out-" + strconv.Itoa(workerID))
+			/*output, err = os.Open("mr-out-" + strconv.Itoa(workerID))
 			if err != nil {
 				//fmt.Println("ERROR")
 			}
@@ -226,8 +245,10 @@ func Worker(mapf func(string, string) []KeyValue,
 				//fmt.Println("ERROR")
 			}
 			args.Content = string(text)
-
+			//fmt.Println("Done reducing WORKERID: " + strconv.Itoa(workerID) + ", FIlE: " + output.Name())
+			*/
 			reply = getTaskCall(&args)
+			//fmt.Println("DONE REDUCING ID: ", workerID, ". FILE: ", output.Name())
 
 		case "Sleep":
 			//fmt.Println("I am sleeping for 10 seconds!")
