@@ -11,8 +11,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 )
 
 // Map functions return a slice of KeyValue.
@@ -21,7 +25,10 @@ type KeyValue struct {
 	Value string
 }
 
-var group sync.WaitGroup
+var downloader *s3manager.Downloader
+var uploader *s3manager.Uploader
+
+const Fs = "ds-2-zz-1123"
 
 // for sorting by key.
 type ByKey []KeyValue
@@ -42,6 +49,17 @@ func ihash(key string) int {
 // main/mrworker.go calls this function.
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
+
+	sess, err := session.NewSession(&aws.Config{
+		Region: aws.String("us-east-1")},
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	downloader = s3manager.NewDownloader(sess)
+	uploader = s3manager.NewUploader(sess)
+
 	for {
 		args := Args{-1, "Give", "", ""}
 		reply := getTaskCall(&args)
@@ -74,6 +92,22 @@ func Worker(mapf func(string, string) []KeyValue,
 func doMap(reply Reply, mapf func(string, string) []KeyValue) Args {
 	nReduce := reply.NReduce
 	workerID := reply.WorkerID
+
+	f, err := os.Create(reply.Content)
+	if err != nil {
+		fmt.Println("Error creating file locally")
+		return Args{}
+	}
+
+	_, err = downloader.Download(f, &s3.GetObjectInput{
+		Bucket: aws.String(Fs),
+		Key:    aws.String(reply.Content),
+	})
+
+	if err != nil {
+		fmt.Println("Error retreiving file from cloud")
+		return Args{}
+	}
 
 	// get file content
 	file, err := os.Open(reply.Content)
@@ -111,6 +145,20 @@ func doMap(reply Reply, mapf func(string, string) []KeyValue) Args {
 				log.Fatalf("ERROR ENCODING")
 			}
 		}
+
+		f, err := os.Open(oname)
+		if err != nil {
+			panic("Error opening file")
+		}
+
+		_, err = uploader.Upload(&s3manager.UploadInput{
+			Bucket: aws.String(Fs),
+			Key:    aws.String(oname),
+			Body:   f,
+		})
+		if err != nil {
+			panic("Error uploading intermediate to cloud")
+		}
 	}
 
 	return Args{workerID, "Done Mapping", "mr-o-" + strconv.Itoa(workerID), ""}
@@ -118,7 +166,7 @@ func doMap(reply Reply, mapf func(string, string) []KeyValue) Args {
 
 func doReduce(reply Reply, reducef func(string, []string) string) Args {
 	workerID := reply.WorkerID
-	nReduce := reply.NReduce
+	//nReduce := reply.NReduce
 	filename := reply.Content
 
 	// create output file
@@ -130,8 +178,20 @@ func doReduce(reply Reply, reducef func(string, []string) string) Args {
 	// reduce
 	var intermediate []KeyValue
 
-	for p := 0; p <= nReduce; p++ {
+	for p := 0; p <= 7; p++ { // should be 7?>>?>
 		oname := strings.Replace(filename, "*", strconv.Itoa(p), 1)
+
+		f, err := os.Create(oname)
+		if err != nil {
+			panic("Error creating reduce ouput file")
+		}
+
+		fmt.Println(oname)
+
+		_, err = downloader.Download(f, &s3.GetObjectInput{
+			Bucket: aws.String(Fs),
+			Key:    aws.String(oname),
+		})
 
 		file, err := os.Open(oname)
 		if err != nil {
@@ -148,6 +208,7 @@ func doReduce(reply Reply, reducef func(string, []string) string) Args {
 
 		}
 		file.Close()
+
 		//os.Remove(oname)
 	}
 

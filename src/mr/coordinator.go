@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -77,6 +78,7 @@ func (c *Coordinator) cmdGive(reply *Reply) {
 	mutex.Unlock()
 
 	if stage == "Map" {
+		fmt.Println("map")
 
 		if task == -1 {
 			reply.Command = "Sleep"
@@ -105,7 +107,7 @@ func (c *Coordinator) cmdGive(reply *Reply) {
 		go c.mapAsyncCheck(workerID)
 
 	} else if stage == "Reduce" {
-		//fmt.Println("REDUS")
+		fmt.Println("REDUS")
 
 		mutex.Lock()
 		task = c.getTask(c.reduceFiles)
