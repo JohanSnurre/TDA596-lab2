@@ -99,7 +99,7 @@ func doMap(reply Reply, mapf func(string, string) []KeyValue) Args {
 
 	// save intermediate files
 	for i := 0; i < nReduce; i++ {
-		oname := "mr-out-" + strconv.Itoa(workerID) + "-" + strconv.Itoa(i)
+		oname := "mr-o-" + strconv.Itoa(workerID) + "-" + strconv.Itoa(i)
 		file, err := os.Create(oname)
 		if err != nil {
 			log.Fatalf("Error creating file!")
@@ -113,7 +113,7 @@ func doMap(reply Reply, mapf func(string, string) []KeyValue) Args {
 		}
 	}
 
-	return Args{workerID, "Done Mapping", "mr-out-" + strconv.Itoa(workerID), ""}
+	return Args{workerID, "Done Mapping", "mr-o-" + strconv.Itoa(workerID), ""}
 }
 
 func doReduce(reply Reply, reducef func(string, []string) string) Args {
@@ -132,7 +132,6 @@ func doReduce(reply Reply, reducef func(string, []string) string) Args {
 
 	for p := 0; p <= nReduce; p++ {
 		oname := strings.Replace(filename, "*", strconv.Itoa(p), 1)
-		//oname := "mr-out-" + strconv.Itoa(workerID) + "-" + strconv.Itoa(p)
 
 		file, err := os.Open(oname)
 		if err != nil {
@@ -149,7 +148,7 @@ func doReduce(reply Reply, reducef func(string, []string) string) Args {
 
 		}
 		file.Close()
-		os.Remove(oname)
+		//os.Remove(oname)
 	}
 
 	// sorting

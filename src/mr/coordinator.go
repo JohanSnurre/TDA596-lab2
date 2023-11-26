@@ -1,302 +1,225 @@
 package mr
 
 import (
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"io"
 	"log"
-	"net"
-	"net/http"
 	"net/rpc"
 	"os"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
 
-type Coordinator struct {
-	// Your definitions here.
-
-	files         []string
-	mapFiles      map[int]int //0, 1, 2
-	reduceFiles   map[int]int //0, 1, 2
-	intermediates []string
-	nReduce       int
-	fileWorker    map[int]string
-	lastGivenID   int
-	stage         string
+// Map functions return a slice of KeyValue.
+type KeyValue struct {
+	Key   string
+	Value string
 }
 
-var mutex sync.Mutex
-var group2 sync.WaitGroup
+var group sync.WaitGroup
 
-var t = 10
+// for sorting by key.
+type ByKey []KeyValue
 
-func (c *Coordinator) HandleWorker(args *Args, reply *Reply) error {
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
-	switch cmd := args.Command; cmd {
-
-	case "Give":
-		c.cmdGive(reply)
-
-	case "Done Mapping":
-		c.cmdMapDone(args)
-
-	case "Done":
-		c.cmdDone(args, reply)
-
-	default:
-		break
-
-	}
-
-	return nil
-
+// use ihash(key) % NReduce to choose the reduce
+// task number for each KeyValue emitted by Map.
+func ihash(key string) int {
+	h := fnv.New32a()
+	h.Write([]byte(key))
+	return int(h.Sum32() & 0x7fffffff)
 }
 
-func (c *Coordinator) getTask(tasks map[int]int) int {
-	index := -1
+// main/mrworker.go calls this function.
+func Worker(mapf func(string, string) []KeyValue,
+	reducef func(string, []string) string) {
+	for {
+		args := Args{-1, "Give", "", ""}
+		reply := getTaskCall(&args)
 
-	for i := range tasks {
-		if tasks[i] == 0 {
-			return i
-		}
-	}
+		switch task := reply.Command; task {
 
-	return index
-}
+		case "Map":
+			//fmt.Println("satrted: " + strconv.Itoa(reply.WorkerID))
+			args = doMap(reply, mapf)
+			//fmt.Println("------->: " + strconv.Itoa(reply.WorkerID))
+			reply = getTaskCall(&args)
+		case "Reduce":
+			args := doReduce(reply, reducef)
+			reply = getTaskCall(&args)
 
-func (c *Coordinator) cmdGive(reply *Reply) {
-	mutex.Lock()
-	stage := c.stage
-	task := c.getTask(c.mapFiles)
-	mutex.Unlock()
+		case "Sleep":
+			//fmt.Println("I am sleeping for 10 seconds!")
+			time.Sleep(1 * time.Second)
 
-	if stage == "Map" {
-
-		if task == -1 {
-			reply.Command = "Sleep"
+		case "Well done", "Please die":
 			return
-		}
-
-		mutex.Lock()
-		//fmt.Println("starting " + strconv.Itoa(task) + ": " + c.files[task])
-		workerID := task
-		filename := c.files[task]
-		c.mapFiles[task] = 2
-		// c.lastGivenID = workerID + 1
-		// filename := c.files[0]
-		// c.files = c.files[1:]
-		reply.Command = c.stage
-
-		c.fileWorker[workerID] = filename
-		mutex.Unlock()
-
-		reply.WorkerID = workerID
-		reply.NReduce = c.nReduce
-		reply.Content = filename
-
-		//go c.asyncCheck(t, workerID, "Map")
-
-		go c.mapAsyncCheck(workerID)
-
-	} else if stage == "Reduce" {
-		//fmt.Println("REDUS")
-
-		mutex.Lock()
-		task = c.getTask(c.reduceFiles)
-
-		if task == -1 {
-			reply.Command = "Sleep"
-			mutex.Unlock()
+		default:
 			return
-		}
 
-		// filename := c.intermediates[0]
-		// c.intermediates = c.intermediates[1:]
-		// workerID := c.lastGivenID
-		// c.lastGivenID = workerID + 1
-		workerID := task
-		filename := c.intermediates[task]
-		c.reduceFiles[task] = 2
-		reply.Command = c.stage
-
-		mutex.Unlock()
-
-		reply.WorkerID = workerID
-		reply.NReduce = c.nReduce
-
-		reply.Content = filename
-
-		mutex.Lock()
-		c.fileWorker[workerID] = filename
-		mutex.Unlock()
-
-		// go c.asyncCheck(t, workerID, "Reduce")
-		go c.reduceAsyncCheck(workerID)
-
-	}
-
-}
-
-func (c *Coordinator) cmdMapDone(args *Args) {
-	mutex.Lock()
-
-	if len(c.intermediates) == 0 {
-		for i := 0; i < c.nReduce; i++ {
-			filename := "mr-out-*-" + strconv.Itoa(i)
-			//fmt.Println(filename)
-			c.intermediates = append(c.intermediates, filename)
-		}
-
-	}
-
-	c.mapFiles[args.WorkerID] = 1
-
-	mapDone := true
-	for i := range c.mapFiles {
-		if c.mapFiles[i] != 1 {
-			mapDone = false
 		}
 	}
 
-	if mapDone {
-		c.stage = "Reduce"
-	}
-
-	// delete(c.fileWorker, args.WorkerID)
-	// if len(c.files) == 0 && len(c.fileWorker) == 0 {
-	// 	c.lastGivenID = 0
-	// 	c.stage = "Reduce"
-	// 	//reply.Command = "Well done"
-	// }
-	mutex.Unlock()
-
 }
 
-func (c *Coordinator) cmdDone(args *Args, reply *Reply) {
-	mutex.Lock()
+func doMap(reply Reply, mapf func(string, string) []KeyValue) Args {
+	nReduce := reply.NReduce
+	workerID := reply.WorkerID
 
-	// if _, ok := c.fileWorker[args.WorkerID]; !ok {
-	// 	reply.Command = "TOO LATE YOU SLOW POS"
-	// 	mutex.Unlock()
-	// 	return
-	// }
+	// get file content
+	file, err := os.Open(reply.Content)
+	if err != nil {
+		log.Fatalf("cannot open!! %v", reply.Content)
+	}
+	content, err := io.ReadAll(file)
+	if err != nil {
+		log.Fatalf("cannot read %v", reply.Content)
+	}
+	file.Close()
 
-	c.reduceFiles[args.WorkerID] = 1
+	// do mapping
+	fileWC := mapf(file.Name(), string(content))
 
-	reduceDone := true
-	for i := range c.reduceFiles {
-		if c.reduceFiles[i] != 1 {
-			reduceDone = false
+	// add to intermediates
+	intermediateBuckets := make([][]KeyValue, reply.NReduce)
+	for _, v := range fileWC {
+		bucket := ihash(v.Key) % nReduce
+
+		intermediateBuckets[bucket] = append(intermediateBuckets[bucket], v)
+	}
+
+	// save intermediate files
+	for i := 0; i < nReduce; i++ {
+		oname := "mr-o-" + strconv.Itoa(workerID) + "-" + strconv.Itoa(i)
+		file, err := os.Create(oname)
+		if err != nil {
+			log.Fatalf("Error creating file!")
+		}
+		enc := json.NewEncoder(file)
+		for _, v := range intermediateBuckets[i] {
+			err := enc.Encode(&v)
+			if err != nil {
+				log.Fatalf("ERROR ENCODING")
+			}
 		}
 	}
 
-	if reduceDone {
-		c.stage = "Done"
-	}
-
-	// delete(c.fileWorker, args.WorkerID)
-	// if len(c.intermediates) == 0 && len(c.fileWorker) == 0 {
-	// 	c.lastGivenID = 0
-	// 	c.stage = "Done"
-	// }
-	mutex.Unlock()
-	reply.Command = "Well done"
+	return Args{workerID, "Done Mapping", "mr-o-" + strconv.Itoa(workerID), ""}
 }
 
-func (c *Coordinator) mapAsyncCheck(worker int) {
-	time.Sleep(time.Duration(10) * time.Second)
-	mutex.Lock()
-	defer mutex.Unlock()
+func doReduce(reply Reply, reducef func(string, []string) string) Args {
+	workerID := reply.WorkerID
+	nReduce := reply.NReduce
+	filename := reply.Content
 
-	if c.mapFiles[worker] != 1 { // worker not done - try again
-		c.mapFiles[worker] = 0
-	}
-}
-
-func (c *Coordinator) reduceAsyncCheck(worker int) {
-	time.Sleep(time.Duration(10) * time.Second)
-	mutex.Lock()
-	defer mutex.Unlock()
-
-	if c.reduceFiles[worker] != 1 { // worker not done - try again
-		c.reduceFiles[worker] = 0
+	// create output file
+	out, err := os.Create("mr-out-" + strconv.Itoa(workerID))
+	if err != nil {
+		log.Fatalf("ERROR CREATING OUTPUT FILE")
 	}
 
-}
+	// reduce
+	var intermediate []KeyValue
 
-func (c *Coordinator) asyncCheck(sleepSeconds int, workerID int, stage string) {
-	time.Sleep(time.Duration(sleepSeconds) * time.Second)
-	mutex.Lock()
-	defer mutex.Unlock()
+	for p := 0; p <= nReduce; p++ {
+		oname := strings.Replace(filename, "*", strconv.Itoa(p), 1)
 
-	switch coordStage := c.stage; coordStage {
-
-	case "Map":
-		if stage != "Map" {
+		file, err := os.Open(oname)
+		if err != nil {
 			break
 		}
-		if file, ok := c.fileWorker[workerID]; ok {
-			c.files = append(c.files, file)
-			delete(c.fileWorker, workerID)
-		}
+		dec := json.NewDecoder(file)
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+				break
+			}
 
-	case "Reduce":
-		if stage != "Reduce" {
-			break
-		}
-		if file, ok := c.fileWorker[workerID]; ok {
-			c.intermediates = append(c.intermediates, file)
-			delete(c.fileWorker, workerID)
-		}
+			intermediate = append(intermediate, kv)
 
+		}
+		file.Close()
+		//os.Remove(oname)
 	}
+
+	// sorting
+
+	sort.Sort(ByKey(intermediate))
+
+	// reduce from mrsquential
+	i := 0
+	for i < len(intermediate) {
+		j := i + 1
+		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, intermediate[k].Value)
+
+		}
+
+		output := reducef(intermediate[i].Key, values)
+
+		// this is the correct format for each line of Reduce output.
+		fmt.Fprintf(out, "%v %v\n", intermediate[i].Key, output)
+
+		i = j
+	}
+
+	//WAIT FOR REDUCING TO BE DONE
+	out.Close()
+
+	//fmt.Println("Reducing done")
+	args := Args{}
+	reply = Reply{}
+
+	args.WorkerID = workerID
+	args.Command = "Done"
+
+	return args
+}
+
+func getTaskCall(args *Args) Reply {
+
+	reply := Reply{}
+
+	ok := call("Coordinator.HandleWorker", &args, &reply)
+	if !ok {
+		//fmt.Println("Call failed!")
+		return reply
+	}
+
+	return reply
 
 }
 
-// start a thread that listens for RPCs from worker.go
-func (c *Coordinator) server() {
-	rpc.Register(c)
-	rpc.HandleHTTP()
-	//l, e := net.Listen("tcp", ":1234")
+// send an RPC request to the coordinator, wait for the response.
+// usually returns true.
+// returns false if something goes wrong.
+func call(rpcname string, args interface{}, reply interface{}) bool {
+	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
 	sockname := coordinatorSock()
-	os.Remove(sockname)
-	l, e := net.Listen("unix", sockname)
-	if e != nil {
-		log.Fatal("listen error:", e)
+	c, err := rpc.DialHTTP("unix", sockname)
+	if err != nil {
+		log.Fatal("dialing:", err)
 	}
-	go http.Serve(l, nil)
-}
+	defer c.Close()
 
-// main/mrcoordinator.go calls Done() periodically to find out
-// if the entire job has finished.
-func (c *Coordinator) Done() bool {
-	ret := false
-
-	// Your code here.
-	mutex.Lock()
-	if c.stage == "Done" {
-		ret = true
-	}
-	mutex.Unlock()
-
-	return ret
-}
-
-func trackFiles(n int) map[int]int {
-	tasks := make(map[int]int)
-
-	for i := 0; i < n; i++ {
-		tasks[i] = 0
+	err = c.Call(rpcname, args, reply)
+	if err == nil {
+		return true
 	}
 
-	return tasks
-}
-
-// create a Coordinator.
-// main/mrcoordinator.go calls this function.
-// nReduce is the number of reduce tasks to use.
-func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{files, trackFiles(len(files)), trackFiles(nReduce), []string{}, nReduce, make(map[int]string), 0, "Map"}
-
-	c.server()
-	return &c
+	fmt.Println(err)
+	return false
 }
