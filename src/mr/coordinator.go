@@ -241,14 +241,14 @@ func (c *Coordinator) asyncCheck(sleepSeconds int, workerID int, stage string) {
 			filename := "mr-out-" + strconv.Itoa(workerID)
 			fmt.Println(workerID, "Crashed during reducing, removing ", filename)
 			fmt.Println(c.availableIDs)
-			/*input := &s3.DeleteObjectInput{
+			input := &s3.DeleteObjectInput{
 				Bucket: aws.String(c.GFSName),
 				Key:    aws.String(filename),
 			}
 			_, err = svc.DeleteObject(input)
 			if err != nil {
 				panic("Error removing intermediate from cloud")
-			}*/
+			}
 			os.Remove(filename)
 			//fmt.Println("REMOVING " + filename)
 		}
