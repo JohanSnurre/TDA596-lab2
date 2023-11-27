@@ -227,6 +227,8 @@ func Worker(mapf func(string, string) []KeyValue,
 		downloader = s3manager.NewDownloader(sess)
 		uploader = s3manager.NewUploader(sess)
 
+		fmt.Println(reply.Command)
+
 		switch task := reply.Command; task {
 
 		case "Map":
@@ -414,9 +416,9 @@ func CallExample() string {
 // returns false if something goes wrong.
 //
 func call(rpcname string, args interface{}, reply interface{}) bool {
-	//c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
-	sockname := coordinatorSock()
-	c, err := rpc.DialHTTP("unix", sockname)
+	c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
+	//sockname := coordinatorSock()
+	//c, err := rpc.DialHTTP("unix", sockname)
 	if err != nil {
 		log.Fatal("dialing:", err)
 	}

@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -11,6 +12,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
 )
 
 type Coordinator struct {
@@ -85,7 +90,7 @@ func (c *Coordinator) HandleWorker(args *Args, reply *Reply) error {
 			reply.GFSname = c.GFSName
 
 			c.fileWorker[workerID] = filename
-			//fmt.Println("MAP GAVE OUT ID: ", workerID)
+			fmt.Println("MAP GAVE OUT ID: ", workerID)
 			mutex.Unlock()
 
 			reply.WorkerID = workerID
@@ -122,7 +127,7 @@ func (c *Coordinator) HandleWorker(args *Args, reply *Reply) error {
 
 			mutex.Lock()
 			c.fileWorker[workerID] = filename
-			//fmt.Println("REDUCE GAVE OUT ID: ", workerID, " WITH FILE ", filename)
+			fmt.Println("REDUCE GAVE OUT ID: ", workerID, " WITH FILE ", filename)
 			mutex.Unlock()
 
 			go c.asyncCheck(t, workerID, "Reduce")
@@ -177,6 +182,14 @@ func (c *Coordinator) asyncCheck(sleepSeconds int, workerID int, stage string) {
 	time.Sleep(time.Duration(sleepSeconds) * time.Second)
 	mutex.Lock()
 
+	sess, err := session.NewSession(&aws.Config{
+		Region: aws.String("us-east-1"),
+	})
+	if err != nil {
+		panic("ERROR REDUCE asd")
+	}
+	svc := s3.New(sess)
+
 	switch coordStage := c.stage; coordStage {
 
 	case "Map":
@@ -188,14 +201,25 @@ func (c *Coordinator) asyncCheck(sleepSeconds int, workerID int, stage string) {
 			c.files = append(c.files, file)
 			delete(c.fileWorker, workerID)
 			c.availableIDs = append(c.availableIDs, workerID)
+
 			//fmt.Println(c.availableIDs)
 			//fmt.Println("ADDED ID " + strconv.Itoa(workerID) + " TO AVAILABLEIDS")
 			filename := "mr-out-" + strconv.Itoa(workerID) + "-*"
 			for i := 0; i < c.nReduce; i++ {
 				filename := strings.Replace(filename, "*", strconv.Itoa(i), 1)
+				fmt.Println(workerID, "Crashed during mapping, removing ", filename)
+				input := &s3.DeleteObjectInput{
+					Bucket: aws.String(c.GFSName),
+					Key:    aws.String(filename),
+				}
+				_, err = svc.DeleteObject(input)
+				if err != nil {
+					panic("Error removing intermediate from cloud")
+				}
 				os.Remove(filename)
 				//fmt.Println("REMOVING " + filename)
 			}
+			fmt.Println(c.availableIDs)
 		}
 
 	case "Reduce":
@@ -210,10 +234,21 @@ func (c *Coordinator) asyncCheck(sleepSeconds int, workerID int, stage string) {
 			//filename := c.fileWorker[workerID]
 			//fmt.Println("FILENAME: " + filename)
 			c.availableIDs = append(c.availableIDs, workerID)
+
 			//fmt.Println("ADDED ID " + strconv.Itoa(workerID) + " TO AVAILABLEIDS")
 			//fmt.Println(c.availableIDs)
 			delete(c.fileWorker, workerID)
 			filename := "mr-out-" + strconv.Itoa(workerID)
+			fmt.Println(workerID, "Crashed during reducing, removing ", filename)
+			fmt.Println(c.availableIDs)
+			/*input := &s3.DeleteObjectInput{
+				Bucket: aws.String(c.GFSName),
+				Key:    aws.String(filename),
+			}
+			_, err = svc.DeleteObject(input)
+			if err != nil {
+				panic("Error removing intermediate from cloud")
+			}*/
 			os.Remove(filename)
 			//fmt.Println("REMOVING " + filename)
 		}
@@ -229,10 +264,10 @@ func (c *Coordinator) asyncCheck(sleepSeconds int, workerID int, stage string) {
 func (c *Coordinator) server() {
 	rpc.Register(c)
 	rpc.HandleHTTP()
-	//l, e := net.Listen("tcp", ":1234")
-	sockname := coordinatorSock()
-	os.Remove(sockname)
-	l, e := net.Listen("unix", sockname)
+	l, e := net.Listen("tcp", ":1234")
+	//sockname := coordinatorSock()
+	//os.Remove(sockname)
+	//l, e := net.Listen("unix", sockname)
 	if e != nil {
 		log.Fatal("listen error:", e)
 	}
