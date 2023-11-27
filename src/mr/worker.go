@@ -240,6 +240,22 @@ func doReduce(reply Reply, reducef func(string, []string) string) Args {
 	//WAIT FOR REDUCING TO BE DONE
 	out.Close()
 
+	temp, err := os.Open(out.Name())
+	if err != nil {
+		fmt.Println("Error uploading final file")
+	}
+	_, err = uploader.Upload(&s3manager.UploadInput{
+		Bucket: aws.String(Fs),
+		Key:    aws.String(out.Name()),
+		Body:   temp,
+	})
+	if err != nil {
+		fmt.Println("Error uploading final file")
+	}
+	temp.Close()
+	//os.Remove(out.Name())
+	//c <- oname
+
 	//fmt.Println("Reducing done")
 	args := Args{}
 	reply = Reply{}
@@ -268,9 +284,9 @@ func getTaskCall(args *Args) Reply {
 // usually returns true.
 // returns false if something goes wrong.
 func call(rpcname string, args interface{}, reply interface{}) bool {
-	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
-	sockname := coordinatorSock()
-	c, err := rpc.DialHTTP("unix", sockname)
+	c, err := rpc.DialHTTP("tcp", "ec2-54-167-33-9.compute-1.amazonaws.com"+":1234") // 130.61.217.34
+	// sockname := coordinatorSock()
+	// c, err := rpc.DialHTTP("unix", sockname)
 	if err != nil {
 		log.Fatal("dialing:", err)
 	}
