@@ -6,9 +6,15 @@ import (
 	"net"
 	"net/http"
 	"net/rpc"
+	"os"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 )
 
 // var mapFiles chan Task
@@ -193,6 +199,32 @@ func (c *Coordinator) cmdDone(args *Args, reply *Reply) {
 
 	if reduceDone {
 		c.stage = "Done"
+
+		var downloader *s3manager.Downloader
+
+		const Fs = "ds-2-zz-1123"
+
+		sess, err := session.NewSession(&aws.Config{
+			Region: aws.String("us-east-1")},
+		)
+		if err != nil {
+			panic(err)
+		}
+
+		downloader = s3manager.NewDownloader(sess)
+
+		for i := 0; i < c.nReduce; i++ {
+			oname := "mr-out-" + strconv.Itoa(i)
+			f, err := os.Create(oname)
+			if err != nil {
+				fmt.Println("coor: Error creating file locally")
+			}
+
+			_, err = downloader.Download(f, &s3.GetObjectInput{
+				Bucket: aws.String(Fs),
+				Key:    aws.String(oname),
+			})
+		}
 	}
 
 	mutex.Unlock()
