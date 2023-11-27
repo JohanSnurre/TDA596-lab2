@@ -24,6 +24,7 @@ type Coordinator struct {
 	availableIDs  []int
 	stage         string
 	activeWorkers int
+	GFSName       string
 }
 
 var mutex sync.Mutex
@@ -81,6 +82,7 @@ func (c *Coordinator) HandleWorker(args *Args, reply *Reply) error {
 			filename := c.files[0]
 			c.files = c.files[1:]
 			reply.Command = c.stage
+			reply.GFSname = c.GFSName
 
 			c.fileWorker[workerID] = filename
 			//fmt.Println("MAP GAVE OUT ID: ", workerID)
@@ -110,7 +112,7 @@ func (c *Coordinator) HandleWorker(args *Args, reply *Reply) error {
 			//fmt.Println("REDUCE ID: " + strconv.Itoa(workerID))
 			c.lastGivenID = workerID + 1
 			reply.Command = c.stage
-
+			reply.GFSname = c.GFSName
 			mutex.Unlock()
 
 			reply.WorkerID = workerID
@@ -155,7 +157,9 @@ func (c *Coordinator) HandleWorker(args *Args, reply *Reply) error {
 		delete(c.fileWorker, args.WorkerID)
 		if len(c.intermediates) == 0 && len(c.fileWorker) == 0 {
 			c.lastGivenID = 0
+
 			c.stage = "Done"
+
 		}
 
 		reply.Command = "Well done"
@@ -262,7 +266,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	for i := 0; i < len(files); i++ {
 		availableIDs = append(availableIDs, i)
 	}
-	c := Coordinator{files, []string{}, nReduce, make(map[int]string), 0, availableIDs, "Map", 0}
+	c := Coordinator{files, []string{}, nReduce, make(map[int]string), 0, availableIDs, "Map", 0, "tda596-group35-lab2-bucket"}
 
 	c.server()
 	return &c

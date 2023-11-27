@@ -13,6 +13,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 )
 
 //
@@ -24,6 +29,10 @@ type KeyValue struct {
 }
 
 var group sync.WaitGroup
+
+var downloader *s3manager.Downloader
+var uploader *s3manager.Uploader
+var GFSName string
 
 // for sorting by key.
 type ByKey []KeyValue
@@ -43,7 +52,7 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-func reduce(reducef func(string, []string) string, filename string, workerID int, nReduce int, out *os.File) {
+func reduce(reducef func(string, []string) string, filename string, workerID int, nReduce int, out *os.File, Fs string) {
 
 	/*
 
@@ -57,6 +66,14 @@ func reduce(reducef func(string, []string) string, filename string, workerID int
 
 
 	*/
+
+	sess, err := session.NewSession(&aws.Config{
+		Region: aws.String("us-east-1"),
+	})
+	if err != nil {
+		panic("ERROR REDUCE asd")
+	}
+	svc := s3.New(sess)
 
 	var intermediate []KeyValue
 	//fmt.Println("WORKERID IN REDUCE CALL: " + strconv.Itoa(workerID))
@@ -73,9 +90,25 @@ func reduce(reducef func(string, []string) string, filename string, workerID int
 			//fmt.Println("kasdkasdksakd")
 		}
 		*/
-		//fmt.Println("FILENAME: " + filename)
+		//fmt.Println("GFSName: ", Fs)
 		rep := strconv.Itoa(p)
 		oname := strings.Replace(filename, "*", rep, 1)
+
+		f, err := os.Create(oname)
+		if err != nil {
+			panic("Error creating reduce ouput file")
+		}
+
+		_, err = downloader.Download(f, &s3.GetObjectInput{
+			Bucket: aws.String(Fs),
+			Key:    aws.String(oname),
+		})
+		if err != nil {
+			os.Remove(oname)
+			break
+			//panic("Error downloading file from cloud in reduce")
+		}
+
 		//oname = oname + "-" + strconv.Itoa(p)
 		//fmt.Println("REDUCING FILE " + oname)
 
@@ -107,6 +140,16 @@ func reduce(reducef func(string, []string) string, filename string, workerID int
 		}
 		*/
 		file.Close()
+		os.Remove(oname)
+		input := &s3.DeleteObjectInput{
+			Bucket: aws.String(Fs),
+			Key:    aws.String(oname),
+		}
+		_, err = svc.DeleteObject(input)
+		if err != nil {
+			panic("Error removing intermediate from cloud")
+		}
+
 	}
 
 	sort.Sort(ByKey(intermediate))
@@ -133,15 +176,25 @@ func reduce(reducef func(string, []string) string, filename string, workerID int
 
 		i = j
 	}
-
 	out.Close()
-	for p := 0; p < nReduce; p++ {
-		rep := strconv.Itoa(p)
-		oname := strings.Replace(filename, "*", rep, 1)
-
-		os.Remove(oname)
+	out, err = os.Open(out.Name())
+	if err != nil {
+		fmt.Println("ERROR OPENING SAD")
 	}
 
+	//fmt.Println(Fs, out.Name())
+
+	_, err = uploader.Upload(&s3manager.UploadInput{
+		Bucket: aws.String(Fs),
+		Key:    aws.String(out.Name()),
+		Body:   out,
+	})
+	//_, err = svc.DeleteObject(input)
+	if err != nil {
+		panic("Error uploading out to cloud")
+	}
+	out.Close()
+	os.Remove(out.Name())
 	//c <- oname
 }
 
@@ -162,12 +215,36 @@ func Worker(mapf func(string, string) []KeyValue,
 		workerID := reply.WorkerID
 
 		nReduce := reply.NReduce
+		GFSName := reply.GFSname
 
 		//time.Sleep(2 * time.Second)
+		sess, err := session.NewSession(&aws.Config{
+			Region: aws.String("us-east-1")},
+		)
+		if err != nil {
+			panic("PANIC")
+		}
+		downloader = s3manager.NewDownloader(sess)
+		uploader = s3manager.NewUploader(sess)
 
 		switch task := reply.Command; task {
 
 		case "Map":
+
+			f, err := os.Create(reply.Content)
+			if err != nil {
+				fmt.Println("Error creating file locally")
+				return
+			}
+
+			_, err = downloader.Download(f, &s3.GetObjectInput{
+				Bucket: aws.String(GFSName),
+				Key:    aws.String(reply.Content),
+			})
+			if err != nil {
+				fmt.Println("Error retreiving file from cloud")
+				return
+			}
 
 			//fmt.Println("I am worker", workerID, "with PID:", os.Getpid())
 			//fmt.Println("Working on mapping")
@@ -210,6 +287,21 @@ func Worker(mapf func(string, string) []KeyValue,
 					}
 				}
 
+				f, err := os.Open(oname)
+				if err != nil {
+					panic("Error opening file")
+				}
+				_, err = uploader.Upload(&s3manager.UploadInput{
+					Bucket: aws.String(GFSName),
+					Key:    aws.String(oname),
+					Body:   f,
+				})
+				if err != nil {
+					panic("Error uploading intermediate to cloud")
+				}
+				f.Close()
+				os.Remove(f.Name())
+
 			}
 			//fmt.Println("Done mapping WORKERID: " + strconv.Itoa(workerID) + ", FIlE: " + file.Name())
 			args = Args{workerID, "Done Mapping", "mr-out-" + strconv.Itoa(workerID) + "-*", ""}
@@ -224,7 +316,8 @@ func Worker(mapf func(string, string) []KeyValue,
 			}
 			//fmt.Println("REDUCING FILE " + reply.Content)
 			//fmt.Println("WORKERID BEFORE REDUCE CALL: " + strconv.Itoa(workerID))
-			reduce(reducef, reply.Content, workerID, nReduce, output)
+
+			reduce(reducef, reply.Content, workerID, nReduce, output, reply.GFSname)
 
 			//WAIT FOR REDUCING TO BE DONE
 			output.Close()
@@ -321,7 +414,7 @@ func CallExample() string {
 // returns false if something goes wrong.
 //
 func call(rpcname string, args interface{}, reply interface{}) bool {
-	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
+	//c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
 	sockname := coordinatorSock()
 	c, err := rpc.DialHTTP("unix", sockname)
 	if err != nil {
