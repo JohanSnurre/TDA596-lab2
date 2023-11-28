@@ -262,6 +262,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			}
 			file.Close()
 
+			now := time.Now()
 			fileWC := mapf(file.Name(), string(content))
 
 			//sort.Sort(ByKey(fileWC))
@@ -301,13 +302,17 @@ func Worker(mapf func(string, string) []KeyValue,
 				if err != nil {
 					panic("Error uploading intermediate to cloud")
 				}
-				f.Close()
+
 				os.Remove(f.Name())
 
 			}
+			then := time.Now()
+			fmt.Println("TIME: ", float64(then.UnixNano()-now.UnixNano()))
+			f.Close()
 			//fmt.Println("Done mapping WORKERID: " + strconv.Itoa(workerID) + ", FIlE: " + file.Name())
 			args = Args{workerID, "Done Mapping", "mr-out-" + strconv.Itoa(workerID) + "-*", ""}
 			reply = getTaskCall(&args)
+			fmt.Println("Done mapping")
 
 		case "Reduce":
 			//fmt.Println("Dispatching reducers")
@@ -416,7 +421,7 @@ func CallExample() string {
 // returns false if something goes wrong.
 //
 func call(rpcname string, args interface{}, reply interface{}) bool {
-	c, err := rpc.DialHTTP("tcp", "54.80.68.56"+":1234")
+	c, err := rpc.DialHTTP("tcp", "3.80.39.38"+":1234")
 	//sockname := coordinatorSock()
 	//c, err := rpc.DialHTTP("unix", sockname)
 	if err != nil {
