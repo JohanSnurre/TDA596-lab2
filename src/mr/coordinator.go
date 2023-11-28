@@ -214,7 +214,7 @@ func (c *Coordinator) asyncCheck(sleepSeconds int, workerID int, stage string) {
 				}
 				_, err = svc.DeleteObject(input)
 				if err != nil {
-					fmt.Println("Error removing intermediate from cloud")
+					panic("Error removing intermediate from cloud")
 				}
 				os.Remove(filename)
 				//fmt.Println("REMOVING " + filename)
@@ -247,7 +247,7 @@ func (c *Coordinator) asyncCheck(sleepSeconds int, workerID int, stage string) {
 			}
 			_, err = svc.DeleteObject(input)
 			if err != nil {
-				fmt.Println("Error removing intermediate from cloud")
+				panic("Error removing intermediate from cloud")
 			}
 			os.Remove(filename)
 			//fmt.Println("REMOVING " + filename)
